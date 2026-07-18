@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Nanodrops - rewards for watching live streams",
+  "description": "Get rewarded in nano for the live streams you already watch. Lightweight, privacy-friendly, and open about how it works.",
+  "version": "0.3.0",
+  "permissions": ["storage", "alarms", "notifications"],
+  "host_permissions": [
+    "https://nanodrops.imminence.uk/*",
+    "https://nanodrops.org/*",
+    "https://www.nanodrops.org/*",
+    "https://*.twitch.tv/*",
+    "https://*.kick.com/*"
+  ],
+  "background": { "service_worker": "background.js", "scripts": ["background.js"], "type": "module" },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "nanodrops@nanodrops.org",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["authenticationInfo", "browsingActivity", "websiteActivity"]
+      }
+    },
+    "gecko_android": { "strict_min_version": "142.0" }
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Nanodrops",
+    "default_icon": { "16": "icon16.png", "32": "icon32.png", "48": "icon48.png", "128": "icon128.png" }
+  },
+  "icons": { "16": "icon16.png", "32": "icon32.png", "48": "icon48.png", "128": "icon128.png" },
+  "content_scripts": [
+    {
+      "matches": ["https://*.twitch.tv/*", "https://*.kick.com/*"],
+      "js": ["content-stream.js", "hud.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://nanodrops.org/*", "https://www.nanodrops.org/*"],
+      "js": ["content-bridge.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

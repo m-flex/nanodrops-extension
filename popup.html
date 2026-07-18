@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { width: 260px; margin: 0; font: 13px/1.4 system-ui, sans-serif; background: #0e0f13; color: #e7e9ee; }
+      .wrap { padding: 14px; }
+      h1 { font-size: 13px; margin: 0 0 10px; letter-spacing: .04em; text-transform: uppercase; color: #9aa0ab; }
+      .row { display: flex; justify-content: space-between; margin: 6px 0; }
+      .k { color: #9aa0ab; }
+      .v { font-variant-numeric: tabular-nums; }
+      .ok { color: #22c55e; }
+      .warn { color: #f5a623; }
+      .off { color: #6b7280; }
+      a.btn { display: block; margin-top: 12px; padding: 8px 10px; text-align: center; text-decoration: none;
+              border: 1px solid #2a2d36; border-radius: 6px; color: #e7e9ee; }
+      a.btn.primary { border-color: #22c55e55; color: #22c55e; }
+      a.site { display: block; margin-top: 12px; text-align: center; font-size: 11px; color: #6b7280; text-decoration: none; }
+      a.site:hover { color: #9aa0ab; }
+      /* !important so it beats the more specific `a.btn`/`a.site` display:block;
+         without it a `.hide` button still renders (CSS specificity 0,1,1 > 0,1,0). */
+      .hide { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Nanodrops</h1>
+      <div class="row"><span class="k">Account</span><span id="acct" class="v">…</span></div>
+      <div class="row"><span class="k">Channel</span><span id="chan" class="v off">—</span></div>
+      <div class="row"><span class="k">Earning</span><span id="earn" class="v off">no</span></div>
+      <a id="signin" class="btn primary hide" href="https://nanodrops.org" target="_blank">Sign in on Nanodrops</a>
+      <a id="verify" class="btn warn hide" href="#" role="button">Verify you're human</a>
+      <a class="site" href="https://nanodrops.org" target="_blank">browse more streams on nanodrops.org ↗</a>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>
