@@ -21,63 +21,28 @@ to drain rewards meant for real viewers. It produces no coin, for anyone.
 Cost is a few milliseconds of CPU roughly every 25 seconds, only while
 actively watching a funded stream.
 
-## How it works
+## What's in the box
 
 | Piece | Role |
 |---|---|
-| `content-stream.js` | On `twitch.tv/*` + `kick.com/*`: reports `{platform, channel, frameAdvancing, mediaTime, onScreen, videoMuted, visible}` every 1s. |
+| `content-stream.js` | On `twitch.tv/*` + `kick.com/*`: reports the player's playback state every 1s. |
 | `hud.js` | On-stream overlay (Shadow DOM): earning state + why-not reason, rate, next-drop countdown, verify/sign-in links. Collapses to a pill. |
 | `content-bridge.js` | On `nanodrops.org/*`: lifts the site's own `nd_token` (JWT) to the background worker. |
-| `background.js` | Session state machine. Per-tab state map, channel-to-faucet resolve, `start -> heartbeat+evidence -> proof -> pause`, rolling PoW, human-check pause/resume, badge. |
+| `background.js` | Session state machine: per-tab state, channel-to-faucet resolve, heartbeats, rolling PoW, human-check pause/resume, badge. |
 | `pow.js` | sha256 hashcash solver (liveness proof, not mining). |
 | `popup.*` | Toolbar status + verify / sign-in deep links. |
-
-## Anti-spoof (the "is the user really watching" signal)
-
-A client-side signal can never be truly unforgeable: the user controls the
-browser. The goal is to raise faking from "one line of JS / a curl loop" to
-"run a real, audible, on-screen, decoding stream." Layers, weakest to
-strongest:
-
-1. **Decoding frames + media-time (page-side).** Decoded-frame count must
-   advance; `currentTime` is reported. A paused/stalled/stubbed `<video>`
-   decodes nothing.
-2. **On-screen geometry (page-side).** Player visible, at least 240x135, at
-   least half on-screen, which kills the 1px/offscreen hidden player.
-   Page-side mute intent (`muted` or `volume === 0`) pauses earning
-   immediately.
-3. **Tab audible + not tab-muted (browser-level).** The browser sets
-   `tab.audible`/`mutedInfo` from real audio output; a script inside the
-   stream page cannot forge them. Defeats tab-muted / silent-video farming.
-4. **Server-side plausibility.** Every heartbeat carries
-   `{mediaTime, frameAdvancing, audible, onScreen}`; the server checks the
-   evidence is coherent (media time moving forward at a plausible rate) before
-   crediting.
-
-This signal is one layer of several; the server also runs rolling proof-of-
-work, human verification checks, per-IP limits, proxy/VPN reputation, and
-payout audits that do not trust it at all.
-
-Other hardening:
-
-- **Per-tab state map**: two stream tabs can't seesaw earning (a qualifying
-  tab always beats an idle one; the current earning tab wins ties).
-- **SPA channel-switch re-key**: navigating channel A to B in the same tab
-  immediately closes A's session before starting B's, so payouts are never
-  attributed to a stream the viewer left.
-- **Fail-closed message parsing**: absent/malformed fields read as "muted" /
-  "not playing"; `nd-token` writes are pinned to nanodrops.org sender origins.
-- **VOD/clip paths are reserved** and hosts are pinned to canonical channel
-  pages, so only live channel pages ever start sessions.
 
 ## What it reads, and what it sends
 
 On a stream page it reads the video player's own state: playing, muted,
-visible. On nanodrops.org it reads the login token the site already saved for
-you. It sends heartbeats to the Nanodrops server. It does not read browsing
-history, page content, keystrokes, other tabs, or anything on any other site.
-Payouts are public by design on the nano ledger and in the transparency feed
-at https://nanodrops.org.
+visible. That is what tells the server you are really watching instead of
+parking a muted tab in the background. On nanodrops.org it reads the login
+token the site already saved for you. It sends heartbeats to the Nanodrops
+server, which validates the playback evidence before crediting anything;
+this signal is one anti-abuse layer of several on the server side. It does
+not read browsing history, page content, keystrokes, other tabs, or anything
+on any other site. Payouts are public by design on the nano ledger and in
+the transparency feed at https://nanodrops.org.
 
 ## One package, both engines
 
