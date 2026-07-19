@@ -117,10 +117,3 @@ A single `manifest.json` ships to Chrome/Edge **and** Firefox:
 
 Temporary add-ons vanish on restart; a durable Firefox install needs a signed
 XPI.
-
-## Known limits (deliberate)
-
-- **One stream at a time**, best qualifying tab wins (matches per-viewer
-  earning).
-- OS-level mute is invisible to the browser (`tab.audible` stays true).
-  Accepted.
