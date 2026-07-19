@@ -12,15 +12,6 @@ This is the full, unmodified source of what ships to the stores. No build
 step, no bundler, no minification: the JS in this repo is byte for byte the JS
 that runs in your browser.
 
-## Not a cryptominer
-
-`pow.js` is a plain sha256 hashcash solver, the same idea as a proof-of-work
-CAPTCHA. The server hands out a nonce and a difficulty, the extension finds a
-matching hash, the server checks it. It exists to make it expensive for bots
-to drain rewards meant for real viewers. It produces no coin, for anyone.
-Cost is a few milliseconds of CPU roughly every 25 seconds, only while
-actively watching a funded stream.
-
 ## What's in the box
 
 | Piece | Role |
@@ -43,6 +34,15 @@ this signal is one anti-abuse layer of several on the server side. It does
 not read browsing history, page content, keystrokes, other tabs, or anything
 on any other site. Payouts are public by design on the nano ledger and in
 the transparency feed at https://nanodrops.org.
+
+## Why there's a proof-of-work
+
+`pow.js` is a plain sha256 hashcash solver, the same idea as a proof-of-work
+CAPTCHA. The server hands out a nonce and a difficulty, the extension finds a
+matching hash, the server checks it. It exists to make it expensive for bots
+to drain rewards meant for real viewers. It does not mine cryptocurrency and
+produces no coin, for anyone. Cost is a few milliseconds of CPU roughly every
+25 seconds, only while actively watching a funded stream.
 
 ## One package, both engines
 
