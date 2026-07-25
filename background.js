@@ -83,14 +83,19 @@ let prevRemaining = null; // extrapolated countdown last tick, to catch the 0 cr
 let needsHumanCheck = false;
 let lastFaucetId = null; // last session's faucet; status polls + verify link while paused
 let lastStatusPoll = 0;
+// Follow-a-faucet: channels the viewer asked to be pinged about when their pot
+// can pay again. Mirrors chrome.storage.local nd_watch (source of truth across
+// service-worker restarts); nd_watch_state holds last-seen payable per faucet.
+let watchlist = []; // [{ faucetId, channel, platform, url }]
 let verifyWindowId = null; // the open Turnstile popup window, if any
 let ticking = false;
 
 async function ensureLoaded() {
   if (loaded) return;
-  const s = await chrome.storage.local.get(['nd_token', 'nd_fp']);
+  const s = await chrome.storage.local.get(['nd_token', 'nd_fp', 'nd_watch']);
   token = s.nd_token || null;
   fp = s.nd_fp || crypto.randomUUID();
+  watchlist = Array.isArray(s.nd_watch) ? s.nd_watch : [];
   if (!s.nd_fp) await chrome.storage.local.set({ nd_fp: fp });
   loaded = true;
 }
@@ -335,6 +340,54 @@ function meTotal() {
   return me ? me.earnedXno + me.pendingXno : null;
 }
 
+/** Alarm ('faucet-watch', every 5 min): can any watched faucet pay now?
+ *  Payable = the streamer is live AND a covering pot has funds (faucetView's
+ *  `funded` already includes platform/category pots). Alert only on the
+ *  not-payable → payable transition, then drop the entry (one-shot, no spam);
+ *  nd_watch_state persists last-seen payable so a restart can't re-alert. */
+async function checkWatchedFaucets() {
+  await ensureLoaded();
+  if (!watchlist.length) return;
+  let rows;
+  try {
+    rows = (await api('/api/faucets'))?.faucets;
+  } catch {
+    return; // transient; next alarm retries
+  }
+  if (!Array.isArray(rows)) return;
+  const s = await chrome.storage.local.get('nd_watch_state');
+  const state = s.nd_watch_state && typeof s.nd_watch_state === 'object' ? s.nd_watch_state : {};
+  const keep = [];
+  const nextState = {};
+  for (const w of watchlist) {
+    const f = rows.find((r) => r.id === w.faucetId);
+    const payable = !!f && f.online === true && f.funded === true;
+    if (payable && state[w.faucetId] !== true) {
+      notifyFunded(w);
+    } else {
+      keep.push(w);
+      nextState[w.faucetId] = payable;
+    }
+  }
+  watchlist = keep;
+  await chrome.storage.local.set({ nd_watch: keep, nd_watch_state: nextState });
+}
+
+function notifyFunded(w) {
+  try {
+    // The notification id carries the stream URL so a click can open it even
+    // after this ephemeral worker restarted (no storage lookup needed).
+    chrome.notifications?.create(`nd-open|${w.url}`, {
+      type: 'basic',
+      iconUrl: 'icon128.png',
+      title: `Nanodrops: ${w.channel} can pay again`,
+      message: `The faucet for ${w.channel} is funded and live. Click to watch and earn.`,
+    });
+  } catch {
+    /* notifications optional */
+  }
+}
+
 function notifyHumanCheck() {
   try {
     chrome.notifications?.create('nd-human-check', {
@@ -389,6 +442,27 @@ function pickTab(now) {
   return best;
 }
 
+// Server-sent not-counting reasons (GET /api/sessions/status `reason`) mapped to
+// short human copy. Display-only: we never invent a reason the server didn't
+// send — anything unmapped falls back to the generic line in get-status.
+const REASON_TEXT = {
+  'other-tab': 'another tab is your primary stream',
+  'no-session': 'session expired, resuming shortly',
+  'no-account': 'sign in on nanodrops.org to earn',
+  'invalid-stream': 'this stream cannot earn',
+  'stream-offline': 'stream is offline',
+  'kick-paused': 'stream is paused',
+  'no-wallet': 'add a payout wallet on nanodrops.org',
+  'not-linked': 'link your Twitch/Kick account on nanodrops.org',
+  'faucet-dry': 'faucet is empty - fund it or watch another',
+  'not-watching': 'not counted as watching yet',
+  idle: 'marked idle, interact with the stream',
+  'needs-captcha': 'verify you are human to keep earning',
+  'no-proof': 'waiting for proof of watching',
+  'no-playback': 'no playback detected',
+  'not-eligible': 'not eligible right now',
+};
+
 function pausedReason(tab, soundOn) {
   if (!token) return 'sign in on nanodrops.org to earn';
   if (!tab) return 'no stream open';
@@ -423,7 +497,7 @@ async function tick() {
     // silent-fake feed.
     if (tab) {
       const recentlyAudible = now - lastAudibleAt < AUDIBLE_WINDOW;
-      evidence = { mediaTime: tab.mediaTime, frameAdvancing: tab.frameAdvancing, audible: recentlyAudible, onScreen: tab.onScreen };
+      evidence = { mediaTime: tab.mediaTime, frameAdvancing: tab.frameAdvancing, audible: recentlyAudible, onScreen: tab.onScreen, ...(typeof tab.frames === 'number' ? { frames: tab.frames } : {}) };
     }
 
     // Switching channel/platform in the earning tab (SPA nav) must re-key the
@@ -518,6 +592,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         platform: msg.platform === 'kick' ? 'kick' : 'twitch',
         channel: typeof msg.channel === 'string' ? msg.channel : '',
         frameAdvancing: !!msg.frameAdvancing,
+        ...(typeof msg.frames === 'number' ? { frames: msg.frames } : {}),
         mediaTime: typeof msg.mediaTime === 'number' ? msg.mediaTime : 0,
         onScreen: !!msg.onScreen,
         videoMuted: msg.videoMuted !== false, // fail-closed if absent
@@ -538,15 +613,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const st = session?.status;
       const earning = earningNow();
       // Watching client-side but the server isn't counting it → say WHY, not
-      // "earning". The common case is an unfunded stream (no covering pot has a
-      // balance); other not-counting cases (IP cap, VPN, another primary) we
-      // can't disambiguate from status, so keep it honest but generic.
+      // "earning". The status payload now carries the server's own `reason`;
+      // map it to human copy and only fall back to the old funded-flag
+      // heuristic / generic line when the field is absent (older server).
       let reason;
       if (needsHumanCheck) reason = null; // verify button carries the message
       else if (!cur) reason = lastReason || 'paused';
       else if (session?.status && !session.status.counting) {
-        reason = session.status.faucetFunded === false ? 'this stream has no rewards funded' : 'not earning right now';
+        reason =
+          REASON_TEXT[session.status.reason] ??
+          (session.status.faucetFunded === false ? 'this stream has no rewards funded' : 'not earning right now');
       } else reason = null;
+      // Follow-a-faucet: offer the "notify when funded" toggle when the current
+      // channel's pot can't pay (server says dry/offline/unfunded), when the
+      // page shows no playback (an offline channel never advances frames), or
+      // when the channel is already watched (so it can be untoggled).
+      const tab = pickTab(Date.now());
+      const chan = session?.channel ?? tab?.channel ?? null;
+      const plat = session?.platform ?? (tab ? tab.platform : null);
+      let faucetWatch = null;
+      if (chan) {
+        const dry = !!(st && !st.counting && (st.reason === 'faucet-dry' || st.reason === 'stream-offline' || st.faucetFunded === false));
+        // ponytail: "no playback" also matches a user-paused live stream; the 5-min
+        // server check is ground truth, over-offering an opt-in toggle is harmless.
+        const noPlayback = !session && !!tab && !tab.frameAdvancing;
+        const watched = watchlist.some((x) => x.channel === chan && x.platform === plat);
+        if (dry || noPlayback || watched) faucetWatch = { channel: chan, platform: plat, faucetId: session?.faucetId ?? null, watched };
+      }
       sendResponse({
         signedIn: !!token,
         earning,
@@ -560,6 +653,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         needsHumanCheck,
         hourlyRateXno: stats?.hourlyRateXno ?? null,
         usdPerXno: stats?.usdPerXno ?? null,
+        // Lifetime credited and reserved-but-unsent (separately), for the popup.
+        // null until /api/me answers (the popup hides the rows, never shows 0).
+        lifetimeXno: me?.earnedXno ?? null,
+        pendingXno: me?.pendingXno ?? null,
+        faucetWatch,
         // Earnings accrued since this stream's session began (credited + reserved-
         // but-unsent). The viewer earns from one stream at a time, so the total's
         // rise while watching this one IS what it paid.
@@ -581,6 +679,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  if (msg?.type === 'faucet-watch') {
+    // Popup toggle: add/remove the current channel on the funding watchlist.
+    (async () => {
+      await ensureLoaded();
+      const platform = msg.platform === 'kick' ? 'kick' : 'twitch';
+      const channel = typeof msg.channel === 'string' ? msg.channel.toLowerCase() : '';
+      if (!channel) {
+        sendResponse({ ok: false });
+        return;
+      }
+      if (msg.on) {
+        let faucetId = typeof msg.faucetId === 'string' && msg.faucetId ? msg.faucetId : null;
+        if (!faucetId) {
+          try {
+            faucetId = await resolveFaucet(platform, channel); // works for offline channels too
+          } catch {
+            sendResponse({ ok: false }); // unresolvable — popup reverts the toggle
+            return;
+          }
+        }
+        if (!watchlist.some((w) => w.faucetId === faucetId)) {
+          const host = platform === 'kick' ? 'kick.com' : 'twitch.tv';
+          watchlist.push({ faucetId, channel, platform, url: `https://${host}/${channel}` });
+        }
+        // Seed "not payable" so the first alarm check only alerts on a real
+        // transition (and a restart between add and check can't re-seed as true).
+        const s = await chrome.storage.local.get('nd_watch_state');
+        const state = s.nd_watch_state && typeof s.nd_watch_state === 'object' ? s.nd_watch_state : {};
+        state[faucetId] = false;
+        await chrome.storage.local.set({ nd_watch: watchlist, nd_watch_state: state });
+      } else {
+        watchlist = watchlist.filter((w) => !(w.channel === channel && w.platform === platform));
+        await chrome.storage.local.set({ nd_watch: watchlist });
+      }
+      sendResponse({ ok: true, watched: !!msg.on });
+    })();
+    return true;
+  }
   if (msg?.type === 'open-verify') {
     // From the HUD (content script can't open windows) or the popup.
     void openVerify();
@@ -593,8 +729,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // Backstop: a hard-closed tab sends no final ping; the alarm re-runs tick so
 // staleness is noticed and earning pauses. 30s is Chrome's alarm floor.
 chrome.alarms.create('backstop', { periodInMinutes: 0.5 });
+// Funding alerts: cheap no-op while the watchlist is empty (no fetch happens).
+chrome.alarms.create('faucet-watch', { periodInMinutes: 5 });
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === 'backstop') void tick();
+  if (a.name === 'faucet-watch') void checkWatchedFaucets();
+});
+
+// A funding alert's id embeds the stream URL (see notifyFunded) — open it.
+chrome.notifications?.onClicked?.addListener((id) => {
+  if (!id.startsWith('nd-open|')) return;
+  const url = id.slice('nd-open|'.length);
+  if (!/^https:\/\/(twitch\.tv|kick\.com)\//.test(url)) return; // ids are ours, but stay strict
+  try {
+    chrome.tabs.create({ url });
+    chrome.notifications.clear(id);
+  } catch {
+    /* teardown */
+  }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {

@@ -3,6 +3,14 @@
 // background worker, so the extension earns as the same account without a
 // separate login. First-party only: it reads nanodrops.org's own storage.
 
+// Stamp the page so the site knows the extension is installed and can skip
+// its "install the extension" prompt.
+try {
+  document.documentElement.dataset.ndExt = chrome.runtime.getManifest().version;
+} catch {
+  /* extension context gone */
+}
+
 let last = undefined;
 
 function send() {

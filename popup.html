@@ -12,6 +12,9 @@
       .ok { color: #22c55e; }
       .warn { color: #f5a623; }
       .off { color: #6b7280; }
+      .usd { color: #6b7280; }
+      label.row { align-items: center; cursor: pointer; }
+      input[type="checkbox"] { accent-color: #22c55e; margin: 0; }
       a.btn { display: block; margin-top: 12px; padding: 8px 10px; text-align: center; text-decoration: none;
               border: 1px solid #2a2d36; border-radius: 6px; color: #e7e9ee; }
       a.btn.primary { border-color: #22c55e55; color: #22c55e; }
@@ -28,6 +31,14 @@
       <div class="row"><span class="k">Account</span><span id="acct" class="v">…</span></div>
       <div class="row"><span class="k">Channel</span><span id="chan" class="v off">—</span></div>
       <div class="row"><span class="k">Earning</span><span id="earn" class="v off">no</span></div>
+      <!-- Data rows below stay hidden until the background actually has the value. -->
+      <div id="row-stream" class="row hide"><span class="k">This stream</span><span id="estream" class="v ok"></span></div>
+      <div id="row-next" class="row hide"><span class="k">Next drop</span><span id="next" class="v"></span></div>
+      <div id="row-rate" class="row hide"><span class="k">Rate</span><span id="rate" class="v"></span></div>
+      <div id="row-life" class="row hide"><span class="k">Lifetime</span><span id="life" class="v"></span></div>
+      <div id="row-pend" class="row hide"><span class="k">Pending</span><span id="pend" class="v"></span></div>
+      <!-- Follow-a-faucet: shown only when the current faucet is dry/offline. -->
+      <label id="row-watch" class="row hide"><span class="k">Notify when funded</span><input id="watch" type="checkbox" /></label>
       <a id="signin" class="btn primary hide" href="https://nanodrops.org" target="_blank">Sign in on Nanodrops</a>
       <a id="verify" class="btn warn hide" href="#" role="button">Verify you're human</a>
       <a class="site" href="https://nanodrops.org" target="_blank">browse more streams on nanodrops.org ↗</a>

@@ -39,7 +39,7 @@ const HOST_OK = {
 // (twitch.tv/<chan>/clip/<slug>, kick.com/<chan>/clips/<id>, .../videos).
 const VOD_SEGS = new Set(['clip', 'clips', 'video', 'videos']);
 
-// A genuine player is at least roughly this big and at least half on-screen.
+// A genuine player shows at least roughly this much of itself on-screen.
 const MIN_W = 240;
 const MIN_H = 135;
 
@@ -55,16 +55,27 @@ function currentChannel() {
   return seg;
 }
 
+// Viewport-clipped box of an element, in CSS px.
+function visibleBox(el) {
+  const r = el.getBoundingClientRect();
+  return {
+    w: Math.max(0, Math.min(r.right, window.innerWidth) - Math.max(r.left, 0)),
+    h: Math.max(0, Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0)),
+  };
+}
+
+// The page holds more <video> than the one being watched: Twitch swaps elements
+// during ad/quality transitions, Kick leaves sidebar hover-previews and panel
+// embeds in the DOM — playing, but 0-sized or offscreen. Taking the first
+// non-paused one in DOM order measured a decoy, so a viewer watching a
+// full-size player got "player is hidden or too small" forever. The one the
+// user is actually watching is the biggest one on screen.
 function playerVideo() {
-  if (PLATFORM === 'twitch') {
-    // The player can hold more than one <video> during ad/quality transitions;
-    // prefer the one actually playing over whichever is first in DOM order.
-    const inPlayer = Array.from(document.querySelectorAll('.video-player video, [data-a-target="video-player"] video'));
-    const hit = inPlayer.find((v) => !v.paused) ?? inPlayer[0];
-    if (hit) return hit;
-  }
   const vids = Array.from(document.querySelectorAll('video'));
-  return vids.find((v) => !v.paused) ?? vids[0] ?? null;
+  const playing = vids.filter((v) => !v.paused);
+  const pool = playing.length ? playing : vids;
+  const area = (v) => { const b = visibleBox(v); return b.w * b.h; };
+  return pool.reduce((best, v) => (best === null || area(v) > area(best) ? v : best), null);
 }
 
 function decodedFrames(v) {
@@ -77,11 +88,13 @@ function decodedFrames(v) {
 
 function onScreen(v) {
   if (document.visibilityState !== 'visible') return false;
-  const r = v.getBoundingClientRect();
-  const vw = window.innerWidth, vh = window.innerHeight;
-  const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
-  const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
-  return w >= MIN_W && h >= MIN_H && w * h >= (r.width * r.height) * 0.5;
+  // display:none / visibility:hidden / opacity:0 players still have a rect.
+  if (v.checkVisibility && !v.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
+  // Judged on the VISIBLE slice only: a 1px or offscreen player can't show
+  // MIN_W x MIN_H. No ratio-of-own-size rule — a player bigger than the
+  // viewport (page zoomed in, short window) is filling the screen, not hiding.
+  const b = visibleBox(v);
+  return b.w >= MIN_W && b.h >= MIN_H;
 }
 
 function readState() {
@@ -103,6 +116,7 @@ function readState() {
     platform: PLATFORM,
     channel,
     frameAdvancing: advancing,
+    frames, // raw decoded-frame count: the server's fps-plausibility input
     mediaTime: Number.isFinite(v.currentTime) ? v.currentTime : 0,
     onScreen: onScreen(v),
     videoMuted: v.muted || v.volume === 0,
